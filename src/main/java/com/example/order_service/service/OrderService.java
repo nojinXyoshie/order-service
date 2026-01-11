@@ -9,12 +9,9 @@ import com.example.order_service.dto.CreateOrderResponse;
 import com.example.order_service.dto.OrderResponse;
 import com.example.order_service.dto.PaymentCallbackRequest;
 import com.example.order_service.exception.ResourceNotFoundException;
-import com.example.order_service.messaging.PaymentMessagePublisher;
-import com.example.order_service.messaging.PaymentStatusMessage;
 import com.example.order_service.repository.OrderRepository;
 import com.example.order_service.repository.PaymentRepository;
 import java.util.UUID;
-import org.springframework.amqp.AmqpException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -27,16 +24,13 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private final PaymentRepository paymentRepository;
-    private final PaymentMessagePublisher paymentMessagePublisher;
     private final NotificationService notificationService;
 
     public OrderService(OrderRepository orderRepository,
                         PaymentRepository paymentRepository,
-                        PaymentMessagePublisher paymentMessagePublisher,
                         NotificationService notificationService) {
         this.orderRepository = orderRepository;
         this.paymentRepository = paymentRepository;
-        this.paymentMessagePublisher = paymentMessagePublisher;
         this.notificationService = notificationService;
     }
 
@@ -50,13 +44,7 @@ public class OrderService {
         Payment payment = new Payment(paymentId, order.getId(), order.getAmount());
         paymentRepository.save(payment);
 
-        try {
-            paymentMessagePublisher.publishPaymentRequest(payment);
-        } catch (AmqpException ex) {
-            log.error("Failed to publish payment request for order {}", order.getId(), ex);
-            payment.markFailed();
-            order.markFailed();
-        }
+        log.info("Order {} created with payment {}. Waiting for payment callback.", order.getId(), paymentId);
 
         return new CreateOrderResponse(order.getId(), payment.getPaymentId(), order.getStatus(), order.getAmount());
     }
@@ -71,11 +59,6 @@ public class OrderService {
     @Transactional
     public void handlePaymentCallback(PaymentCallbackRequest request) {
         processPaymentUpdate(request.getPaymentId(), request.getOrderId(), request.getAmount(), request.getStatus());
-    }
-
-    @Transactional
-    public void handlePaymentStatusMessage(PaymentStatusMessage message) {
-        processPaymentUpdate(message.paymentId(), message.orderId(), message.amount(), message.status());
     }
 
     private OrderResponse mapToOrderResponse(Order order) {
